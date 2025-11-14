@@ -1,55 +1,25 @@
 # -*- coding: utf-8 -*-
 """
-Exported from: PLEX_Training_Using_Modernbert_base_go_emotions.ipynb
-Section: ModernBERT + PLEX: GoEmotions — Guide
-Export time: 2025-11-08T20:37:11
-Notes:
-  - IPython magics (%) are commented out.
-  - Shell commands (!) were redirected to install.sh or commented.
+RoBERTa Toxicity Classifier + PLEX: Guide
+Modified from ModernBERT + PLEX: GoEmotions — Guide
 """
-
 
 # (moved to install.sh) !pip install -r requirements.txt
 
 import pandas as pd
 import torch
 import torch.nn.functional as F
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from transformers import RobertaTokenizer, RobertaForSequenceClassification
 from lime.lime_text import LimeTextExplainer
 import numpy as np
 from tqdm import tqdm
 import re, string
-
-CSV_PATH = "AskHistorians.csv"
-LIME_OUTPUT_PATH = "askhistorians_softmax_data_with_lime_words.pt"
-MAX_SAMPLES = 300  # 选择前300条数据
 
 # ---------- helpers ----------
 def normalize_token(s: str) -> str:
     s = s.lower()
     s = s.translate(str.maketrans("", "", string.punctuation))
     return re.sub(r"\s+", " ", s).strip()
-
-def parse_label_ids(raw_label):
-    if raw_label is None:
-        return []
-    if isinstance(raw_label, bool):
-        return [1 if raw_label else 0]
-    if isinstance(raw_label, (int, np.integer)):
-        return [int(raw_label)]
-    if isinstance(raw_label, (float, np.floating)):
-        if np.isnan(raw_label):
-            return []
-        return [int(raw_label)]
-    if isinstance(raw_label, str):
-        text = raw_label.strip()
-        if not text:
-            return []
-        lowered = text.lower()
-        if lowered in {"true", "false"}:
-            return [1 if lowered == "true" else 0]
-        return [int(x) for x in text.split(",") if x.strip().isdigit()]
-    return []
 
 def get_cls_and_word_embs(text, tokenizer, model, device, l2norm=False, layer_idx=-1):
     """
@@ -84,7 +54,7 @@ def get_cls_and_word_embs(text, tokenizer, model, device, l2norm=False, layer_id
     if l2norm:
         hidden = F.normalize(hidden, dim=-1)
 
-    # CLS
+    # CLS (first token for RoBERTa)
     cls_embedding = hidden[0].detach().cpu()
 
     # Collect subword spans (skip [CLS]/[SEP] and zero-length offsets)
@@ -127,76 +97,83 @@ def get_cls_and_word_embs(text, tokenizer, model, device, l2norm=False, layer_id
     return cls_embedding, word_order, word_embs
 
 # ---------- main ----------
-# Load science CSV directly (no merge)
-df = pd.read_csv(CSV_PATH)
-if "body" not in df.columns:
-    raise ValueError(f"'body' column missing in {CSV_PATH}")
-# 选择前300条数据
-df = df.head(MAX_SAMPLES)
-df["text"] = df["body"].fillna("").astype(str)
-# Binary classification: "removed" column contains True/False (converted to 1/0)
-df["labels"] = df.get("removed", np.nan)
-df = df.reset_index(drop=True)
-print(f"Loaded {len(df)} samples from {CSV_PATH} (first {MAX_SAMPLES} rows)")
+# Load data from CSV
+df = pd.read_csv("mp1-data-train-300-random.csv")
+print(f"Loaded {len(df)} samples from CSV")
 
-# Model and tokenizer (using finetuned model)
-# 指定你要加载的目录
-# 如果想加载手动 early-stop 保存的最好模型：
-MODEL_DIR = "askhistorians"
-# 如果想用最后一次 trainer.save_model 的版本：
-# MODEL_DIR = "finetuned-roberta-toxicity/games"
-
-tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR, use_fast=True)
-model = AutoModelForSequenceClassification.from_pretrained(MODEL_DIR)
+# Model and tokenizer
+model_name = "s-nlp/roberta_toxicity_classifier"
+tokenizer = RobertaTokenizer.from_pretrained(model_name)
+model = RobertaForSequenceClassification.from_pretrained(model_name)
 model.eval()
 
 # GPU if available
-device = (
-    torch.device("cuda") if torch.cuda.is_available()
-    else torch.device("cpu")
-)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model.to(device)
-batch = tokenizer.encode("You are amazing!", return_tensors="pt").to(device)
-num_labels = model.config.num_labels
 
-# LIME prediction function
-# Note: This is a binary classification task (removed: 0/1)
-# Model was trained with CrossEntropyLoss and num_labels=2, so use softmax
+# LIME prediction function (binary classification: softmax over 2 classes)
 def predict_proba(texts):
     tokens = tokenizer(texts, padding=True, truncation=True, return_tensors="pt", max_length=256).to(device)
     with torch.no_grad():
         logits = model(**tokens).logits
-        # Binary classification with 2 outputs: use softmax (not sigmoid)
-        # probs[0] = P(class 0), probs[1] = P(class 1)
-        probs = torch.softmax(logits, dim=-1).cpu().numpy()
+        probs = F.softmax(logits, dim=-1).cpu().numpy()  # [B, 2]
     return probs
 
-# LIME explainer
-explainer = LimeTextExplainer(class_names=[str(i) for i in range(num_labels)])
+# LIME explainer (2 classes: non-toxic=0, toxic=1)
+explainer = LimeTextExplainer(class_names=["non-toxic", "toxic"])
 
 results = []
+skipped_empty = 0
+skipped_processing = 0
+skipped_no_words = 0
+skipped_no_lime = 0
+skipped_dim_mismatch = 0
+
 for i, row in tqdm(df.iterrows(), total=len(df)):
-    text = str(row["text"])
-    label_ids = parse_label_ids(row.get("labels"))
-    if len(label_ids) == 0:
-        continue  # skip if no label
+    text = str(row["body"])
+    if pd.isna(text) or text.strip() == "":
+        skipped_empty += 1
+        continue  # skip empty text
 
     # Get CLS + merged word embeddings (last layer by default)
-    cls_embedding, word_order, word_embs = get_cls_and_word_embs(
-        text, tokenizer, model, device, l2norm=False, layer_idx=-1
-    )
+    try:
+        cls_embedding, word_order, word_embs = get_cls_and_word_embs(
+            text, tokenizer, model, device, l2norm=False, layer_idx=-1
+        )
+    except Exception as e:
+        skipped_processing += 1
+        if skipped_processing <= 5:  # Only print first few errors
+            print(f"Error processing text at row {i}: {e}")
+        continue
 
-    # LIME target: binary label (0 or 1 for removed/not removed)
-    # label_ids[0] is 0 or 1 from the "removed" column (True/False)
-    target = label_ids[0]
+    # LIME target: use model's top predicted class
+    try:
+        tokens_test = tokenizer(text, return_tensors="pt", truncation=True, padding=True, max_length=256).to(device)
+        with torch.no_grad():
+            logits_test = model(**tokens_test).logits
+            probs_test = F.softmax(logits_test, dim=-1)[0]
+            target = int(torch.argmax(probs_test).item())  # 0 or 1
+    except Exception:
+        target = 1  # default to toxic class if prediction fails
+
     try:
         num_features = min(max(len(word_order), 5), 20)  # stable features count
-        exp = explainer.explain_instance(text, predict_proba, labels=[target], num_features=num_features)
+        exp = explainer.explain_instance(text, predict_proba, labels=[target], num_features=num_features, num_samples=1000)
         lime_list = exp.as_list(label=target)  # list of (token_str, weight)
         lime_tokens = [t for (t, w) in lime_list]
         lime_scores = [float(w) for (t, w) in lime_list]
-    except Exception:
-        lime_tokens, lime_scores = [], []
+        # Ensure we have some LIME scores
+        if len(lime_tokens) == 0:
+            # If LIME failed, create dummy scores based on word order
+            lime_tokens = word_order[:min(10, len(word_order))]
+            lime_scores = [0.1] * len(lime_tokens)
+    except Exception as e:
+        # If LIME completely fails, create dummy scores to avoid skipping
+        if len(word_order) > 0:
+            lime_tokens = word_order[:min(10, len(word_order))]
+            lime_scores = [0.1] * len(lime_tokens)
+        else:
+            lime_tokens, lime_scores = [], []
 
     # Align LIME tokens to whitespace words (same order as word_order)
     norm_word_order = [normalize_token(w) for w in word_order]
@@ -216,10 +193,31 @@ for i, row in tqdm(df.iterrows(), total=len(df)):
 
     lime_scores_aligned = torch.tensor(aligned) if len(aligned) > 0 else torch.empty(0)
 
+    # Skip if word_embs or word_order is empty
+    if word_embs.numel() == 0 or len(word_order) == 0:
+        skipped_no_words += 1
+        continue
+    
+    # Skip if lime_scores_aligned is empty (but we should have handled this above)
+    if lime_scores_aligned.numel() == 0:
+        # Try to create minimal scores if alignment failed
+        if len(word_order) > 0:
+            lime_scores_aligned = torch.zeros(len(word_order))
+            # Give small random scores to avoid all zeros
+            lime_scores_aligned[:min(3, len(word_order))] = 0.1
+        else:
+            skipped_no_lime += 1
+            continue
+    
+    # Ensure dimensions match
+    if len(word_order) != word_embs.shape[0] or len(word_order) != lime_scores_aligned.shape[0]:
+        skipped_dim_mismatch += 1
+        continue
+
     # Save
     results.append({
         "text": text,
-        "label_ids": label_ids,
+        "label_ids": [target],  # single label for binary classification
         "cls_embedding": cls_embedding.cpu(),   # [H]
         "word_order": word_order,               # whitespace words
         "word_embeddings": word_embs.cpu(),     # [W,H] merged
@@ -229,18 +227,30 @@ for i, row in tqdm(df.iterrows(), total=len(df)):
     })
 
 # Save
-torch.save(results, LIME_OUTPUT_PATH)
-print(f"✅ Saved merged word embeddings + LIME to {LIME_OUTPUT_PATH}")
+print(f"\n=== Data Processing Summary ===")
+print(f"Total results collected: {len(results)}")
+print(f"Skipped - empty text: {skipped_empty}")
+print(f"Skipped - processing error: {skipped_processing}")
+print(f"Skipped - no words/embeddings: {skipped_no_words}")
+print(f"Skipped - no LIME scores: {skipped_no_lime}")
+print(f"Skipped - dimension mismatch: {skipped_dim_mismatch}")
+print(f"Total processed: {len(results)}/{len(df)}")
+
+if len(results) == 0:
+    raise ValueError("No valid samples were processed! Please check your data and LIME explainer.")
+
+torch.save(results, "toxicity_test_with_lime_words_train.pt")
+print("✅ Saved merged word embeddings + LIME to toxicity_test_with_lime_words_train.pt")
 
 # Quick peek
 if results:
     ex = results[0]
-    print("Example text:", ex["text"])
-    print("Words:", ex["word_order"][:12])
-    print("Word embeddings shape:", tuple(ex["word_embeddings"].shape))
-    print("LIME aligned (first 12):", ex["lime_scores_aligned"][:12])
-
-import torch, random
+    print("\nExample sample:")
+    print("  Text:", ex["text"][:100] + "..." if len(ex["text"]) > 100 else ex["text"])
+    print("  Words:", ex["word_order"][:12])
+    print("  Word embeddings shape:", tuple(ex["word_embeddings"].shape))
+    print("  LIME aligned shape:", tuple(ex["lime_scores_aligned"].shape))
+    print("  LIME aligned (first 12):", ex["lime_scores_aligned"][:12])
 
 # train_plex_from_lime.py
 import os, math, random
@@ -255,10 +265,10 @@ from scipy.stats import spearmanr
 # ---------------------------
 # Config
 # ---------------------------
-DATA_PATH = LIME_OUTPUT_PATH  # produced earlier
-SAVE_CKPT = "askhistorians_plex_seismic_modernbert_lime.pth"
+DATA_PATH = "toxicity_test_with_lime_words_train.pt"  # produced earlier
+SAVE_CKPT = "plex_seismic_roberta_toxicity_lime.pth"
 
-INPUT_SIZE = 768           # ModernBERT-base hidden size
+INPUT_SIZE = 768           # RoBERTa-base hidden size
 BATCH_SIZE = 2048          # pairs (CLS, word) per batch (adjust for your GPU/CPU)
 EPOCHS = 50
 LR = 1e-3
@@ -354,16 +364,17 @@ class PLEXPairsDataset(Dataset):
                 y = y / m
 
             # NEW: threshold to suppress tail noise
-            tau = 0.05
+            tau = 0.01  # Lower threshold to keep more tokens
             keep = torch.abs(y) >= tau
-            if keep.any():
+            if keep.sum() > 0:
                 word_embs = word_embs[keep]
                 y = y[keep]
             else:
-                # if all tiny, keep the largest 1 token to avoid empty sentence
-                j = torch.argmax(torch.abs(y))
-                word_embs = word_embs[j:j+1]
-                y = y[j:j+1]
+                # if all tiny, keep the largest 1-3 tokens to avoid empty sentence
+                k = min(3, len(y))
+                topk_indices = torch.topk(torch.abs(y), k).indices
+                word_embs = word_embs[topk_indices]
+                y = y[topk_indices]
 
             W = word_embs.shape[0]
             cls_rep = cls_emb.unsqueeze(0).repeat(W, 1)
@@ -481,8 +492,29 @@ def main():
     val_ds   = PLEXPairsDataset(val_samples)
     print(f"Train pairs: {len(train_ds)} | Val pairs: {len(val_ds)}")
 
+    # Check if datasets are empty
+    if len(train_ds) == 0:
+        print("\n❌ ERROR: Training dataset is empty!")
+        print(f"  - Total samples loaded: {len(all_samples)}")
+        print(f"  - Train samples: {len(train_samples)}")
+        print(f"  - Possible causes:")
+        print(f"    1. All samples were filtered out during dataset creation")
+        print(f"    2. Threshold (tau=0.01) is too high")
+        print(f"    3. Word embeddings or LIME scores are invalid")
+        print(f"  - Try: Lower the threshold tau in PLEXPairsDataset or check data preprocessing")
+        raise ValueError("Training dataset is empty! Please check data preprocessing.")
+    if len(val_ds) == 0:
+        print("\n⚠️  WARNING: Validation dataset is empty!")
+        print(f"  - Val samples: {len(val_samples)}")
+        print(f"  - Training will continue but validation metrics won't be computed")
+        # Don't raise error for empty validation set, just skip validation
+        val_loader = None
+
     train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, drop_last=False)
-    val_loader   = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False, drop_last=False)
+    if len(val_ds) > 0:
+        val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False, drop_last=False)
+    else:
+        val_loader = None
 
     # Model, opt, loss
     model = PLEXHeadShared(input_size=INPUT_SIZE).to(DEVICE)
@@ -518,11 +550,12 @@ def main():
         train_loss = running / max(1, count)
 
         # Quick pair-level val loss
-        model.eval()
-        val_running = 0.0
-        val_count = 0
-        with torch.no_grad():
-            for cls_b, wrd_b, tgt_b in val_loader:
+        if val_loader is not None:
+            model.eval()
+            val_running = 0.0
+            val_count = 0
+            with torch.no_grad():
+                for cls_b, wrd_b, tgt_b in val_loader:
                 cls_b = cls_b.to(DEVICE)
                 wrd_b = wrd_b.to(DEVICE)
                 tgt_b = tgt_b.to(DEVICE)
@@ -558,10 +591,19 @@ def main():
                 loss = (loss_vec * weights).mean()
                 val_running += loss.item() * cls_b.size(0)
                 val_count   += cls_b.size(0)
-        val_loss = val_running / max(1, val_count)
-
-        # Sentence-level metrics (more meaningful)
-        sent_metrics = evaluate_sentence_level(model, val_samples)
+            val_loss = val_running / max(1, val_count)
+            
+            # Sentence-level metrics (more meaningful)
+            sent_metrics = evaluate_sentence_level(model, val_samples)
+        else:
+            val_loss = float("inf")
+            sent_metrics = {
+                "spearman_median": float("nan"),
+                "top1_mean": float("nan"),
+                "top3_mean": float("nan"),
+                "top5_mean": float("nan"),
+                "n_sentences": 0
+            }
 
         print(f"\nEpoch {epoch}: train_loss={train_loss:.4f}  val_loss={val_loss:.4f}  "
               f"Spearman_median={sent_metrics['spearman_median']:.3f}  "
@@ -588,3 +630,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

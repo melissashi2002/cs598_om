@@ -20,36 +20,11 @@ import numpy as np
 from tqdm import tqdm
 import re, string
 
-CSV_PATH = "AskHistorians.csv"
-LIME_OUTPUT_PATH = "askhistorians_softmax_data_with_lime_words.pt"
-MAX_SAMPLES = 300  # 选择前300条数据
-
 # ---------- helpers ----------
 def normalize_token(s: str) -> str:
     s = s.lower()
     s = s.translate(str.maketrans("", "", string.punctuation))
     return re.sub(r"\s+", " ", s).strip()
-
-def parse_label_ids(raw_label):
-    if raw_label is None:
-        return []
-    if isinstance(raw_label, bool):
-        return [1 if raw_label else 0]
-    if isinstance(raw_label, (int, np.integer)):
-        return [int(raw_label)]
-    if isinstance(raw_label, (float, np.floating)):
-        if np.isnan(raw_label):
-            return []
-        return [int(raw_label)]
-    if isinstance(raw_label, str):
-        text = raw_label.strip()
-        if not text:
-            return []
-        lowered = text.lower()
-        if lowered in {"true", "false"}:
-            return [1 if lowered == "true" else 0]
-        return [int(x) for x in text.split(",") if x.strip().isdigit()]
-    return []
 
 def get_cls_and_word_embs(text, tokenizer, model, device, l2norm=False, layer_idx=-1):
     """
@@ -127,57 +102,38 @@ def get_cls_and_word_embs(text, tokenizer, model, device, l2norm=False, layer_id
     return cls_embedding, word_order, word_embs
 
 # ---------- main ----------
-# Load science CSV directly (no merge)
-df = pd.read_csv(CSV_PATH)
-if "body" not in df.columns:
-    raise ValueError(f"'body' column missing in {CSV_PATH}")
-# 选择前300条数据
-df = df.head(MAX_SAMPLES)
-df["text"] = df["body"].fillna("").astype(str)
-# Binary classification: "removed" column contains True/False (converted to 1/0)
-df["labels"] = df.get("removed", np.nan)
-df = df.reset_index(drop=True)
-print(f"Loaded {len(df)} samples from {CSV_PATH} (first {MAX_SAMPLES} rows)")
+# Load first 5 test samples
+df = pd.read_csv("test.tsv", sep="\t", header=None, names=["text", "labels", "meta"])
 
-# Model and tokenizer (using finetuned model)
-# 指定你要加载的目录
-# 如果想加载手动 early-stop 保存的最好模型：
-MODEL_DIR = "askhistorians"
-# 如果想用最后一次 trainer.save_model 的版本：
-# MODEL_DIR = "finetuned-roberta-toxicity/games"
+df_401_600 = df.iloc[400:600].reset_index(drop=True)  # rows 200..399
+df = df.iloc[400:600].reset_index(drop=True)
+# print(len(df_201_400))  # 200
 
-tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR, use_fast=True)
-model = AutoModelForSequenceClassification.from_pretrained(MODEL_DIR)
+# Model and tokenizer
+model_name = "cirimus/modernbert-base-go-emotions"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForSequenceClassification.from_pretrained(model_name)
 model.eval()
 
 # GPU if available
-device = (
-    torch.device("cuda") if torch.cuda.is_available()
-    else torch.device("cpu")
-)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model.to(device)
-batch = tokenizer.encode("You are amazing!", return_tensors="pt").to(device)
-num_labels = model.config.num_labels
 
-# LIME prediction function
-# Note: This is a binary classification task (removed: 0/1)
-# Model was trained with CrossEntropyLoss and num_labels=2, so use softmax
+# LIME prediction function (multi-label: sigmoid)
 def predict_proba(texts):
     tokens = tokenizer(texts, padding=True, truncation=True, return_tensors="pt", max_length=256).to(device)
     with torch.no_grad():
         logits = model(**tokens).logits
-        # Binary classification with 2 outputs: use softmax (not sigmoid)
-        # probs[0] = P(class 0), probs[1] = P(class 1)
-        probs = torch.softmax(logits, dim=-1).cpu().numpy()
+        probs = torch.sigmoid(logits).cpu().numpy()  # [B, 28]
     return probs
 
 # LIME explainer
-explainer = LimeTextExplainer(class_names=[str(i) for i in range(num_labels)])
+explainer = LimeTextExplainer(class_names=[str(i) for i in range(28)])
 
 results = []
 for i, row in tqdm(df.iterrows(), total=len(df)):
     text = str(row["text"])
-    label_ids = parse_label_ids(row.get("labels"))
+    label_ids = [int(x) for x in str(row["labels"]).split(",") if x.isdigit()]
     if len(label_ids) == 0:
         continue  # skip if no label
 
@@ -186,8 +142,7 @@ for i, row in tqdm(df.iterrows(), total=len(df)):
         text, tokenizer, model, device, l2norm=False, layer_idx=-1
     )
 
-    # LIME target: binary label (0 or 1 for removed/not removed)
-    # label_ids[0] is 0 or 1 from the "removed" column (True/False)
+    # LIME target: first label (or you can use model's top predicted index instead)
     target = label_ids[0]
     try:
         num_features = min(max(len(word_order), 5), 20)  # stable features count
@@ -229,8 +184,8 @@ for i, row in tqdm(df.iterrows(), total=len(df)):
     })
 
 # Save
-torch.save(results, LIME_OUTPUT_PATH)
-print(f"✅ Saved merged word embeddings + LIME to {LIME_OUTPUT_PATH}")
+torch.save(results, "goemotions_test_with_lime_words_401_600.pt")
+print("✅ Saved merged word embeddings + LIME to goemotions_test_with_lime_words.pt")
 
 # Quick peek
 if results:
@@ -241,6 +196,50 @@ if results:
     print("LIME aligned (first 12):", ex["lime_scores_aligned"][:12])
 
 import torch, random
+
+# --- paths ---
+A = "goemotions_test_with_lime_words_200.pt"       # first 200
+B = "goemotions_test_with_lime_words_201_400.pt"   # 201–400
+OUT = "goemotions_lime_words_train.pt"
+
+# --- load (PyTorch 2.6: allow full unpickle) ---
+data_a = torch.load(A, weights_only=False)
+data_b = torch.load(B, weights_only=False)
+
+print(f"A: {len(data_a)} samples, B: {len(data_b)} samples")
+
+# --- merge + optional de-dup by 'text' ---
+merged = []
+seen = set()
+for ex in (data_a + data_b):
+    txt = ex.get("text", None)
+    if not txt or txt in seen:
+        continue
+    # light validation (skip empty/invalid samples)
+    we = ex.get("word_embeddings", None)
+    la = ex.get("lime_scores_aligned", None)
+    if we is None or la is None:
+        continue
+    if getattr(we, "numel", lambda:0)() == 0 or getattr(la, "numel", lambda:0)() == 0:
+        continue
+    # (optional) enforce matching length with word_order
+    words = ex.get("word_order", [])
+    if len(words) != int(we.shape[0]) or len(words) != int(la.shape[0]):
+        # skip inconsistent samples
+        continue
+
+    merged.append(ex)
+    seen.add(txt)
+
+print(f"Merged (after de-dup + validate): {len(merged)} samples")
+
+# --- shuffle for training ---
+random.seed(42)
+random.shuffle(merged)
+
+# --- save ---
+torch.save(merged, OUT)
+print(f"✅ Saved merged training set → {OUT}")
 
 # train_plex_from_lime.py
 import os, math, random
@@ -255,8 +254,8 @@ from scipy.stats import spearmanr
 # ---------------------------
 # Config
 # ---------------------------
-DATA_PATH = LIME_OUTPUT_PATH  # produced earlier
-SAVE_CKPT = "askhistorians_plex_seismic_modernbert_lime.pth"
+DATA_PATH = "goemotions_lime_words_train.pt"  # produced earlier
+SAVE_CKPT = "plex_seismic_modernbert_lime.pth"
 
 INPUT_SIZE = 768           # ModernBERT-base hidden size
 BATCH_SIZE = 2048          # pairs (CLS, word) per batch (adjust for your GPU/CPU)

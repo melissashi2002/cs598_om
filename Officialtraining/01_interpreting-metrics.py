@@ -18,13 +18,9 @@ from transformers import AutoTokenizer, AutoModelForSequenceClassification
 # --------------------------
 # Config
 # --------------------------
-DATA_PATH = "askhistorians_softmax_data_with_lime_words.pt"
-PLEX_CKPT = "askhistorians_plex_seismic_modernbert_lime.pth"
-# 指定你要加载的目录
-# 如果想加载手动 early-stop 保存的最好模型：
-MODEL_DIR = "askhistorians"
-# 如果想用最后一次 trainer.save_model 的版本：
-# MODEL_DIR = "finetuned-roberta-toxicity/games"
+DATA_PATH = "goemotions_test_with_lime_words_401_600.pt"
+PLEX_CKPT = "plex_seismic_modernbert_lime.pth"
+MODEL_NAME = "cirimus/modernbert-base-go-emotions"   # multi-label; sigmoid over 28 classes
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 K_LIST = [1, 3, 5]
 SEED = 42
@@ -37,38 +33,24 @@ data = torch.load(DATA_PATH, weights_only=False)
 print(f"Loaded {len(data)} samples.")
 
 # --------------------------
-# Finetuned RoBERTa classifier
+# ModernBERT classifier
 # --------------------------
-tok = AutoTokenizer.from_pretrained(MODEL_DIR, use_fast=True)
-clf = AutoModelForSequenceClassification.from_pretrained(MODEL_DIR)
+tok = AutoTokenizer.from_pretrained(MODEL_NAME)
+clf = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME).to(DEVICE)
 clf.eval()
-clf.to(DEVICE)
-batch = tok.encode("You are amazing!", return_tensors="pt").to(DEVICE)
 
 @torch.no_grad()
 def pred_prob(text: str, target_idx: int) -> float:
-    """
-    Get probability for target class (binary: 0 or 1 for removed/not removed)
-    Model was trained with CrossEntropyLoss and num_labels=2, so use softmax
-    target_idx: 0 or 1 (binary classification label)
-    """
     enc = tok(text, return_tensors="pt", truncation=True, padding=True, max_length=256).to(DEVICE)
     logits = clf(**enc).logits
-    # Binary classification with 2 outputs: use softmax (not sigmoid)
-    # probs[0] = P(class 0), probs[1] = P(class 1)
-    probs = torch.softmax(logits, dim=-1)[0]  # [2] probabilities
+    probs = torch.sigmoid(logits)[0]  # [28]
     return float(probs[target_idx].item())
 
 @torch.no_grad()
 def top_pred_idx(text: str) -> int:
-    """
-    Get top predicted class index (0 or 1 for binary classification)
-    Model was trained with CrossEntropyLoss and num_labels=2, so use softmax
-    """
     enc = tok(text, return_tensors="pt", truncation=True, padding=True, max_length=256).to(DEVICE)
     logits = clf(**enc).logits
-    # Binary classification with 2 outputs: use softmax (not sigmoid)
-    probs = torch.softmax(logits, dim=-1)[0]  # [2] probabilities
+    probs = torch.sigmoid(logits)[0]  # [28]
     return int(torch.argmax(probs).item())
 
 # --------------------------
@@ -144,20 +126,9 @@ def remove_words(text: str, words: list[str], top_indices: np.ndarray, k: int) -
     return out if out else text
 
 def topk_indices(scores: np.ndarray, k: int) -> np.ndarray:
-    """返回绝对值最大的 top-k 索引（处理正负分数）"""
     if scores.size == 0:
         return np.array([], dtype=int)
-    return np.argsort(-np.abs(scores))[:min(k, scores.size)]
-
-def jaccard_similarity(set1: set, set2: set) -> float:
-    """计算两个集合的 Jaccard 相似度 (交集/并集)"""
-    if not set1 and not set2:
-        return 1.0
-    if not set1 or not set2:
-        return 0.0
-    intersection = len(set1 & set2)
-    union = len(set1 | set2)
-    return intersection / union if union > 0 else 0.0
+    return np.argsort(-scores)[:min(k, scores.size)]
 
 # --------------------------
 # Evaluate probability drop
@@ -172,7 +143,6 @@ def mean_ci(x):
     return m, (m - 1.96*se, m + 1.96*se) if not np.isnan(se) else (np.nan, np.nan)
 
 results = {k: {"lime": [], "plex": []} for k in K_LIST}
-overlap_results = {k: {"jaccard": [], "intersection_size": [], "union_size": []} for k in K_LIST}
 n_used = 0
 
 for ex in data:
@@ -192,7 +162,6 @@ for ex in data:
     text = ex["text"]
 
     # use model's own top predicted class on ORIGINAL sentence
-    # Binary classification: tgt_idx is 0 or 1 (removed/not removed)
     try:
         tgt_idx = top_pred_idx(text)
         p0 = pred_prob(text, tgt_idx)
@@ -212,14 +181,6 @@ for ex in data:
         p_p = pred_prob(text_p, tgt_idx)
         results[k]["plex"].append(p0 - p_p)
 
-        # 计算 top-k 词的重叠度
-        lime_set = set(li.tolist())
-        plex_set = set(pi.tolist())
-        jaccard = jaccard_similarity(lime_set, plex_set)
-        overlap_results[k]["jaccard"].append(jaccard)
-        overlap_results[k]["intersection_size"].append(len(lime_set & plex_set))
-        overlap_results[k]["union_size"].append(len(lime_set | plex_set))
-
     n_used += 1
 
 print(f"\nEvaluated {n_used} sentences.")
@@ -231,20 +192,3 @@ for k in K_LIST:
     print(f"\nTop-{k} removal Δprob (mean [95% CI]):")
     print(f"  LIME: {m_l:.4f}  [{ci_l[0]:.4f}, {ci_l[1]:.4f}]")
     print(f"  PLEX: {m_p:.4f}  [{ci_p[0]:.4f}, {ci_p[1]:.4f}]")
-
-# Report overlap statistics
-print("\n" + "="*60)
-print("Top-k 词重叠度分析 (LIME vs PLEX)")
-print("="*60)
-for k in K_LIST:
-    jaccard_mean, jaccard_ci = mean_ci(overlap_results[k]["jaccard"])
-    inter_mean, _ = mean_ci(overlap_results[k]["intersection_size"])
-    union_mean, _ = mean_ci(overlap_results[k]["union_size"])
-    print(f"\nTop-{k} 词重叠度:")
-    print(f"  Jaccard 相似度 (交集/并集): {jaccard_mean:.4f}  [{jaccard_ci[0]:.4f}, {jaccard_ci[1]:.4f}]")
-    print(f"  平均交集大小: {inter_mean:.2f}")
-    print(f"  平均并集大小: {union_mean:.2f}")
-    # 计算完全相同的比例
-    exact_matches = sum(1 for j in overlap_results[k]["jaccard"] if j == 1.0)
-    exact_match_rate = exact_matches / len(overlap_results[k]["jaccard"]) if overlap_results[k]["jaccard"] else 0.0
-    print(f"  完全相同的比例: {exact_match_rate:.2%} ({exact_matches}/{len(overlap_results[k]['jaccard'])})")
