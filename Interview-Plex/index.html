@@ -1,0 +1,826 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interview - Sentence Visualization</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 40px;
+            font-size: 1.1em;
+        }
+
+        .navigation {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+
+        .nav-btn {
+            padding: 12px 24px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.3s ease;
+            font-weight: 500;
+        }
+
+        .nav-btn:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .nav-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .nav-btn.active {
+            background: #764ba2;
+        }
+
+        .sentence-container {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 40px;
+            min-height: 300px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 30px;
+            border: 2px solid #e9ecef;
+        }
+
+        .sentence-info {
+            text-align: center;
+            margin-bottom: 20px;
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        .sentence-display {
+            font-size: 24px;
+            line-height: 1.8;
+            text-align: center;
+            padding: 20px;
+            width: 100%;
+            word-wrap: break-word;
+        }
+
+        .sentence-original {
+            color: #333;
+            font-weight: 400;
+        }
+
+        .word-annotation {
+            display: inline-block;
+            padding: 4px 8px;
+            margin: 2px;
+            border-radius: 6px;
+            color: #000;
+            font-weight: 500;
+            transition: transform 0.2s ease;
+            border: none;
+        }
+
+        .word-annotation:hover {
+            transform: scale(1.1);
+            z-index: 10;
+            position: relative;
+        }
+
+        .group-label {
+            background: #667eea;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            display: inline-block;
+            margin-bottom: 20px;
+            font-weight: 600;
+            font-size: 0.9em;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e9ecef;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-top: 20px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            transition: width 0.3s ease;
+        }
+
+        .instructions {
+            background: #e7f3ff;
+            border-left: 4px solid #667eea;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+            color: #333;
+        }
+
+        .instructions h3 {
+            margin-bottom: 10px;
+            color: #667eea;
+        }
+
+        .instructions ul {
+            margin-left: 20px;
+            line-height: 1.8;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+            font-size: 18px;
+        }
+
+        .timer-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #f8f9fa;
+            padding: 15px 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            border: 2px solid #e9ecef;
+        }
+
+        .timer-display {
+            font-size: 1.2em;
+            font-weight: 600;
+            color: #667eea;
+        }
+
+        .timer-group-times {
+            font-size: 0.9em;
+            color: #666;
+            display: flex;
+            gap: 15px;
+        }
+
+        .timer-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .timer-group-label {
+            font-size: 0.75em;
+            color: #999;
+        }
+
+        .toxic-btn-container {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .toxic-btn {
+            padding: 12px 30px;
+            background: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .toxic-btn:hover {
+            background: #c82333;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(220, 53, 69, 0.4);
+        }
+
+        .toxic-btn.active {
+            background: #28a745;
+            box-shadow: 0 0 0 3px rgba(40, 167, 69, 0.3);
+        }
+
+        .toxic-btn.not-toxic {
+            background: #6c757d;
+        }
+
+        .toxic-btn.not-toxic.active {
+            background: #28a745;
+        }
+
+        .save-btn {
+            padding: 12px 24px;
+            background: #28a745;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            margin-top: 10px;
+        }
+
+        .save-btn:hover {
+            background: #218838;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(40, 167, 69, 0.4);
+        }
+
+        .summary-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .summary-modal.active {
+            display: flex;
+        }
+
+        .summary-content {
+            background: white;
+            padding: 40px;
+            border-radius: 20px;
+            max-width: 600px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+        }
+
+        .summary-content h2 {
+            color: #667eea;
+            margin-bottom: 20px;
+        }
+
+        .summary-time-item {
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .summary-time-label {
+            font-weight: 600;
+            color: #333;
+        }
+
+        .summary-time-value {
+            color: #667eea;
+            font-size: 1.2em;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Interview - Sentence Visualization</h1>
+        <p class="subtitle">Interactive sentence display with LIME and Plex annotations</p>
+
+        <div class="instructions">
+            <h3>Instructions</h3>
+            <ul>
+                <li><strong>Sentences 1-15:</strong> Display original sentences only</li>
+                <li><strong>Sentences 16-30:</strong> Display sentences with LIME importance annotations</li>
+                <li><strong>Sentences 31-45:</strong> Display sentences with Plex importance annotations</li>
+                <li>Red colors indicate positive importance, Blue colors indicate negative importance</li>
+                <li><strong>Keyboard shortcuts:</strong> ← → to navigate, <strong>T</strong> for Toxic, <strong>N</strong> for Not Toxic</li>
+                <li>The timer tracks time spent in each group. Click "Save Results to CSV" to download your annotations.</li>
+            </ul>
+        </div>
+
+        <div class="navigation">
+            <button class="nav-btn" id="prevBtn" onclick="previousSentence()">← Previous</button>
+            <button class="nav-btn active" id="currentBtn">Sentence <span id="currentNum">1</span> / 45</button>
+            <button class="nav-btn" id="nextBtn" onclick="nextSentence()">Next →</button>
+        </div>
+
+        <div class="timer-container">
+            <div class="timer-display">
+                <div>Elapsed Time: <span id="currentTimer">00:00</span></div>
+            </div>
+            <div class="timer-group-times">
+                <div class="timer-group">
+                    <div class="timer-group-label">Group 1 (Original)</div>
+                    <div id="group1Time">00:00</div>
+                </div>
+                <div class="timer-group">
+                    <div class="timer-group-label">Group 2 (LIME)</div>
+                    <div id="group2Time">00:00</div>
+                </div>
+                <div class="timer-group">
+                    <div class="timer-group-label">Group 3 (Plex)</div>
+                    <div id="group3Time">00:00</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="progress-bar">
+            <div class="progress-fill" id="progressFill"></div>
+        </div>
+
+        <div class="toxic-btn-container">
+            <button class="toxic-btn not-toxic" id="notToxicBtn" onclick="markToxic(false)">Not Toxic</button>
+            <button class="toxic-btn" id="toxicBtn" onclick="markToxic(true)">Toxic</button>
+            <button class="save-btn" onclick="saveResults()">Save Results to CSV</button>
+        </div>
+
+        <div class="sentence-container">
+            <div id="groupLabel" class="group-label">Group 1: Original</div>
+            <div class="sentence-info" id="sentenceInfo">Loading data...</div>
+            <div class="sentence-display" id="sentenceDisplay">
+                <div class="loading">Loading...</div>
+            </div>
+        </div>
+
+        <div class="summary-modal" id="summaryModal">
+            <div class="summary-content">
+                <h2>Time Summary</h2>
+                <div id="timeSummary"></div>
+                <button class="nav-btn" onclick="closeSummary()" style="width: 100%; margin-top: 20px;">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let data = [];
+        let currentIndex = 0;
+        let toxicLabels = {}; // Store toxic labels: {id: true/false}
+        
+        // Timer variables
+        let startTime = Date.now();
+        let group1StartTime = null;
+        let group2StartTime = null;
+        let group3StartTime = null;
+        let group1TotalTime = 0; // in milliseconds
+        let group2TotalTime = 0;
+        let group3TotalTime = 0;
+        let currentGroupTimer = null;
+        let timerInterval = null;
+
+        // Color mapping functions (similar to matplotlib colormaps)
+        // Reds colormap: lighter background for lower values, darker for higher
+        function getColorFromReds(value) {
+            // value should be between 0 and 1
+            // Matplotlib Reds: starts from white-ish to red
+            const intensity = Math.max(0, Math.min(1, value));
+            // Base color is light red/pink, darker as value increases
+            const r = 255;
+            const g = Math.floor(240 - intensity * 100); // Goes from 240 to 140
+            const b = Math.floor(240 - intensity * 100); // Goes from 240 to 140
+            return `rgb(${r}, ${Math.max(140, g)}, ${Math.max(140, b)})`;
+        }
+
+        // Blues colormap: lighter background for lower values, darker for higher
+        function getColorFromBlues(value) {
+            // value should be between 0 and 1
+            // Matplotlib Blues: starts from white-ish to blue
+            const intensity = Math.max(0, Math.min(1, value));
+            // Base color is light blue, darker as value increases
+            const r = Math.floor(240 - intensity * 100); // Goes from 240 to 140
+            const g = Math.floor(240 - intensity * 100); // Goes from 240 to 140
+            const b = 255;
+            return `rgb(${Math.max(140, r)}, ${Math.max(140, g)}, ${b})`;
+        }
+
+        function parseArrayString(str) {
+            // Parse array string like "[0.1,0.2,-0.1]"
+            try {
+                return JSON.parse(str);
+            } catch (e) {
+                // Fallback: manual parsing
+                const cleaned = str.replace(/[\[\]"]/g, '');
+                return cleaned.split(',').map(x => parseFloat(x.trim()));
+            }
+        }
+
+        function visualizeSentence(sentence, scores, group) {
+            const words = sentence.split(' ').filter(w => w.length > 0); // Remove empty strings
+            const importances = parseArrayString(scores);
+            
+            // Check if lengths match
+            if (words.length !== importances.length) {
+                console.error(`Mismatch: ${words.length} words but ${importances.length} scores`);
+                console.error('Words:', words);
+                console.error('Scores:', importances);
+                // Use minimum length to avoid errors
+                const minLen = Math.min(words.length, importances.length);
+                words.splice(minLen);
+                importances.splice(minLen);
+            }
+            
+            // Normalize importances
+            if (importances.length === 0) {
+                return '<span class="sentence-original">' + sentence + '</span>';
+            }
+            
+            const maxAbsImportance = Math.max(...importances.map(imp => Math.abs(imp)));
+            const normalized = maxAbsImportance > 0 
+                ? importances.map(imp => imp / maxAbsImportance)
+                : importances;
+            
+            // Create word elements with colors
+            let html = '';
+            for (let i = 0; i < words.length; i++) {
+                const normImp = normalized[i] || 0;
+                let color;
+                
+                if (normImp >= 0) {
+                    color = getColorFromReds(normImp);
+                } else {
+                    color = getColorFromBlues(-normImp);
+                }
+                
+                const title = `Importance: ${importances[i] !== undefined ? importances[i].toFixed(3) : 'N/A'}`;
+                html += `<span class="word-annotation" style="background-color: ${color};" title="${title}">${words[i]}</span> `;
+            }
+            
+            return html;
+        }
+
+        // Timer functions
+        function formatTime(ms) {
+            const totalSeconds = Math.floor(ms / 1000);
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = totalSeconds % 60;
+            return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+        }
+
+        function updateTimers() {
+            const now = Date.now();
+            const elapsed = now - startTime;
+            document.getElementById('currentTimer').textContent = formatTime(elapsed);
+
+            // Update group timers
+            if (group1StartTime !== null) {
+                const group1Elapsed = group1TotalTime + (currentGroupTimer === 1 ? now - group1StartTime : 0);
+                document.getElementById('group1Time').textContent = formatTime(group1Elapsed);
+            }
+            if (group2StartTime !== null) {
+                const group2Elapsed = group2TotalTime + (currentGroupTimer === 2 ? now - group2StartTime : 0);
+                document.getElementById('group2Time').textContent = formatTime(group2Elapsed);
+            }
+            if (group3StartTime !== null) {
+                const group3Elapsed = group3TotalTime + (currentGroupTimer === 3 ? now - group3StartTime : 0);
+                document.getElementById('group3Time').textContent = formatTime(group3Elapsed);
+            }
+        }
+
+        function startGroupTimer(groupNum) {
+            const now = Date.now();
+            
+            // Stop previous group timer if any
+            if (currentGroupTimer === 1 && group1StartTime !== null) {
+                group1TotalTime += now - group1StartTime;
+                group1StartTime = null;
+            } else if (currentGroupTimer === 2 && group2StartTime !== null) {
+                group2TotalTime += now - group2StartTime;
+                group2StartTime = null;
+            } else if (currentGroupTimer === 3 && group3StartTime !== null) {
+                group3TotalTime += now - group3StartTime;
+                group3StartTime = null;
+            }
+
+            // Start new group timer
+            currentGroupTimer = groupNum;
+            if (groupNum === 1) {
+                group1StartTime = now;
+            } else if (groupNum === 2) {
+                group2StartTime = now;
+            } else if (groupNum === 3) {
+                group3StartTime = now;
+            }
+        }
+
+        function markToxic(isToxic) {
+            if (currentIndex < 0 || currentIndex >= data.length) return;
+            
+            const item = data[currentIndex];
+            toxicLabels[item.id] = isToxic;
+            
+            // Update button styles
+            document.getElementById('toxicBtn').classList.toggle('active', isToxic);
+            document.getElementById('notToxicBtn').classList.toggle('active', !isToxic);
+        }
+
+        function saveResults() {
+            // Calculate final times
+            const now = Date.now();
+            if (currentGroupTimer === 1 && group1StartTime !== null) {
+                group1TotalTime += now - group1StartTime;
+            } else if (currentGroupTimer === 2 && group2StartTime !== null) {
+                group2TotalTime += now - group2StartTime;
+            } else if (currentGroupTimer === 3 && group3StartTime !== null) {
+                group3TotalTime += now - group3StartTime;
+            }
+
+            // Prepare CSV data
+            const csvRows = [];
+            csvRows.push(['id', 'sentence', 'toxic', 'group', 'time_spent_ms']);
+            
+            data.forEach((item, index) => {
+                const isToxic = toxicLabels[item.id] === true ? 'yes' : (toxicLabels[item.id] === false ? 'no' : '');
+                let group = '';
+                let timeSpent = 0;
+                
+                if (index < 15) {
+                    group = 'Original';
+                    // Estimate time per sentence in group 1
+                    timeSpent = group1TotalTime / 15;
+                } else if (index < 30) {
+                    group = 'LIME';
+                    timeSpent = group2TotalTime / 15;
+                } else {
+                    group = 'Plex';
+                    timeSpent = group3TotalTime / 15;
+                }
+                
+                csvRows.push([
+                    item.id,
+                    `"${item.sentence.replace(/"/g, '""')}"`,
+                    isToxic,
+                    group,
+                    Math.round(timeSpent)
+                ]);
+            });
+
+            // Add summary row
+            csvRows.push([]);
+            csvRows.push(['Summary']);
+            csvRows.push(['Group 1 (Original) Total Time (ms)', group1TotalTime]);
+            csvRows.push(['Group 2 (LIME) Total Time (ms)', group2TotalTime]);
+            csvRows.push(['Group 3 (Plex) Total Time (ms)', group3TotalTime]);
+            csvRows.push(['Group 1 Average Time per Sentence (ms)', Math.round(group1TotalTime / 15)]);
+            csvRows.push(['Group 2 Average Time per Sentence (ms)', Math.round(group2TotalTime / 15)]);
+            csvRows.push(['Group 3 Average Time per Sentence (ms)', Math.round(group3TotalTime / 15)]);
+
+            // Convert to CSV string
+            const csvContent = csvRows.map(row => row.join(',')).join('\n');
+            
+            // Download file
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+            link.setAttribute('download', `interview_results_${new Date().toISOString().split('T')[0]}.csv`);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            // Show summary modal
+            showSummary();
+        }
+
+        function showSummary() {
+            const summaryHTML = `
+                <div class="summary-time-item">
+                    <div class="summary-time-label">Group 1 (Original) Total Time:</div>
+                    <div class="summary-time-value">${formatTime(group1TotalTime)}</div>
+                </div>
+                <div class="summary-time-item">
+                    <div class="summary-time-label">Group 2 (LIME) Total Time:</div>
+                    <div class="summary-time-value">${formatTime(group2TotalTime)}</div>
+                </div>
+                <div class="summary-time-item">
+                    <div class="summary-time-label">Group 3 (Plex) Total Time:</div>
+                    <div class="summary-time-value">${formatTime(group3TotalTime)}</div>
+                </div>
+                <div class="summary-time-item">
+                    <div class="summary-time-label">Group 1 Average per Sentence:</div>
+                    <div class="summary-time-value">${formatTime(Math.round(group1TotalTime / 15))}</div>
+                </div>
+                <div class="summary-time-item">
+                    <div class="summary-time-label">Group 2 Average per Sentence:</div>
+                    <div class="summary-time-value">${formatTime(Math.round(group2TotalTime / 15))}</div>
+                </div>
+                <div class="summary-time-item">
+                    <div class="summary-time-label">Group 3 Average per Sentence:</div>
+                    <div class="summary-time-value">${formatTime(Math.round(group3TotalTime / 15))}</div>
+                </div>
+            `;
+            document.getElementById('timeSummary').innerHTML = summaryHTML;
+            document.getElementById('summaryModal').classList.add('active');
+        }
+
+        function closeSummary() {
+            document.getElementById('summaryModal').classList.remove('active');
+        }
+
+        function displaySentence(index) {
+            if (index < 0 || index >= data.length) return;
+            
+            // Update toxic button state
+            const item = data[index];
+            const isToxic = toxicLabels[item.id];
+            document.getElementById('toxicBtn').classList.toggle('active', isToxic === true);
+            document.getElementById('notToxicBtn').classList.toggle('active', isToxic === false);
+            
+            currentIndex = index;
+            
+            // Update navigation
+            document.getElementById('currentNum').textContent = index + 1;
+            document.getElementById('prevBtn').disabled = index === 0;
+            document.getElementById('nextBtn').disabled = index === data.length - 1;
+            
+            // Update progress
+            const progress = ((index + 1) / data.length) * 100;
+            document.getElementById('progressFill').style.width = progress + '%';
+            
+            // Determine group and display mode
+            let html = '';
+            let groupLabel = '';
+            let groupNum = 0;
+            
+            if (index < 15) {
+                // Group 1: Original (1-15)
+                groupLabel = 'Group 1: Original';
+                groupNum = 1;
+                html = `<span class="sentence-original">${item.sentence}</span>`;
+                document.getElementById('sentenceInfo').textContent = `ID: ${item.id} - Displaying original sentence`;
+            } else if (index < 30) {
+                // Group 2: LIME (16-30)
+                groupLabel = 'Group 2: LIME Annotated';
+                groupNum = 2;
+                html = visualizeSentence(item.sentence, item['LIME score'], 'LIME');
+                document.getElementById('sentenceInfo').textContent = `ID: ${item.id} - Word Importances by LIME`;
+            } else {
+                // Group 3: Plex (31-45)
+                groupLabel = 'Group 3: Plex Annotated';
+                groupNum = 3;
+                html = visualizeSentence(item.sentence, item['Plex score'], 'Plex');
+                document.getElementById('sentenceInfo').textContent = `ID: ${item.id} - Word Importances by Plex`;
+            }
+            
+            // Start timer for current group
+            startGroupTimer(groupNum);
+            
+            document.getElementById('groupLabel').textContent = groupLabel;
+            document.getElementById('sentenceDisplay').innerHTML = html;
+        }
+
+        function nextSentence() {
+            if (currentIndex < data.length - 1) {
+                displaySentence(currentIndex + 1);
+            }
+        }
+
+        function previousSentence() {
+            if (currentIndex > 0) {
+                displaySentence(currentIndex - 1);
+            }
+        }
+
+        // Keyboard navigation
+        document.addEventListener('keydown', (e) => {
+            // Don't trigger if typing in an input field
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+                return;
+            }
+            
+            if (e.key === 'ArrowLeft') {
+                previousSentence();
+            } else if (e.key === 'ArrowRight') {
+                nextSentence();
+            } else if (e.key === 't' || e.key === 'T') {
+                // Press 'T' to mark as Toxic
+                e.preventDefault();
+                markToxic(true);
+            } else if (e.key === 'n' || e.key === 'N') {
+                // Press 'N' to mark as Not Toxic
+                e.preventDefault();
+                markToxic(false);
+            }
+        });
+
+        // Parse CSV line with proper handling of quoted fields
+        function parseCSVLine(line) {
+            const result = [];
+            let current = '';
+            let inQuotes = false;
+            
+            for (let i = 0; i < line.length; i++) {
+                const char = line[i];
+                const nextChar = line[i + 1];
+                
+                if (char === '"') {
+                    if (inQuotes && nextChar === '"') {
+                        current += '"';
+                        i++; // Skip next quote
+                    } else {
+                        inQuotes = !inQuotes;
+                    }
+                } else if (char === ',' && !inQuotes) {
+                    result.push(current);
+                    current = '';
+                } else {
+                    current += char;
+                }
+            }
+            result.push(current);
+            return result;
+        }
+
+        // Load CSV data
+        async function loadData() {
+            try {
+                const response = await fetch('data.csv');
+                const text = await response.text();
+                const lines = text.trim().split('\n');
+                const headers = parseCSVLine(lines[0]).map(h => h.trim());
+                
+                data = [];
+                for (let i = 1; i < lines.length; i++) {
+                    const values = parseCSVLine(lines[i]);
+                    const item = {};
+                    
+                    headers.forEach((header, index) => {
+                        let value = values[index] || '';
+                        // Remove surrounding quotes if present
+                        if (value.startsWith('"') && value.endsWith('"')) {
+                            value = value.slice(1, -1);
+                        }
+                        item[header] = value.trim();
+                    });
+                    
+                    data.push(item);
+                }
+                
+                displaySentence(0);
+            } catch (error) {
+                console.error('Error loading data:', error);
+                document.getElementById('sentenceDisplay').innerHTML = 
+                    '<div class="loading">Error loading data. Please ensure data.csv is available.</div>';
+            }
+        }
+
+        // Initialize
+        loadData();
+        
+        // Start timer interval
+        timerInterval = setInterval(updateTimers, 100);
+        
+        // Initialize first group timer when data loads
+        setTimeout(() => {
+            if (data.length > 0) {
+                startGroupTimer(1); // Start with group 1
+            }
+        }, 100);
+    </script>
+</body>
+</html>
+
