@@ -21,22 +21,28 @@ See [`plex_training/README.md`](plex_training/README.md) for detailed documentat
 
 ### 📁 `Interview-Plex/`
 
-An interactive web-based visualization tool for comparing PLEX and LIME word importance scores.
+A user study tool for measuring the impact of explanation methods on human judgment efficiency. This tool tests how long it takes humans to make judgments (e.g., toxicity classification) under different conditions:
+
+- **Group 1 (Sentences 1-15)**: Original sentences without any explanation annotations
+- **Group 2 (Sentences 16-30)**: Sentences with LIME word importance annotations
+- **Group 3 (Sentences 31-45)**: Sentences with PLEX word importance annotations
 
 **Contents:**
-- `index.html`: Interactive HTML interface for visualizing sentence-level word importance
+- `index.html`: Interactive HTML interface that tracks time spent in each group
 - `generate_data.py`: Script to generate sample data with PLEX and LIME scores
 - `data.csv`: Sample dataset with sentences and corresponding importance scores
 
 **Usage:**
-1. Generate or prepare your data with PLEX and LIME scores
+1. Prepare your data with PLEX and LIME scores
 2. Open `index.html` in a web browser
-3. Navigate through sentences to see side-by-side PLEX vs LIME visualizations
+3. Navigate through sentences and make judgments (e.g., Toxic/Not Toxic)
+4. The tool automatically tracks time spent in each group
+5. Export results to CSV for analysis
 
-This tool is useful for:
-- Demonstrating PLEX capabilities in interviews or presentations
-- Visual comparison of PLEX and LIME explanations
-- Interactive exploration of word importance scores
+This tool is designed for:
+- User studies comparing explanation method effectiveness
+- Measuring how explanation annotations affect human decision-making speed
+- Evaluating the practical utility of PLEX vs LIME in human-in-the-loop scenarios
 
 ## Quick Start
 
